@@ -5,21 +5,21 @@ from random import randint
 import argparse
 
 
-image1 = cv2.imread("three.jpg")
-#image1 = cv2.resize(image, (256,256))
 
+
+# speficies the architecture of the neural network
 protoFile = "pose/coco/pose_deploy_linevec.prototxt"
+#the .caffemodel file stores the weight of the trained model
 weightsFile = "pose/coco/pose_iter_440000.caffemodel"
 nPoints = 18
-# COCO Output Format
-keypointsMapping = ['Nose', 'Neck', 'R-Sho', 'R-Elb', 'R-Wr', 'L-Sho', 'L-Elb', 'L-Wr', 'R-Hip', 'R-Knee', 'R-Ank', 'L-Hip', 'L-Knee', 'L-Ank', 'R-Eye', 'L-Eye', 'R-Ear', 'L-Ear']
 
+#{Nose – 0, Neck – 1, Right Shoulder – 2, Right Elbow – 3, Right Wrist – 4, Left Shoulder – 5, Left Elbow – 6...}
 POSE_PAIRS = [[1,2], [1,5], [2,3], [3,4], [5,6], [6,7],
               [1,8], [8,9], [9,10], [1,11], [11,12], [12,13],
               [1,0], [0,14], [14,16], [0,15], [15,17],
               [2,17], [5,16] ]
 
-# index of pafs correspoding to the POSE_PAIRS
+# index of pafs(Part Association Fields) correspoding to the POSE_PAIRS
 # e.g for POSE_PAIR(1,2), the PAFs are located at indices (31,32) of output, Similarly, (1,5) -> (39,40) and so on.
 mapIdx = [[31,32], [39,40], [33,34], [35,36], [41,42], [43,44],
           [19,20], [21,22], [23,24], [25,26], [27,28], [29,30],
@@ -70,12 +70,6 @@ def getValidPairs(output):
         nA = len(candA)
         nB = len(candB)
 
-        # If keypoints for the joint-pair is detected
-        # check every joint in candA with every joint in candB
-        # Calculate the distance vector between the two joints
-        # Find the PAF values at a set of interpolated points between the joints
-        # Use the above formula to compute a score to mark the connection valid
-
         if( nA != 0 and nB != 0):
             valid_pair = np.zeros((0,3))
             for i in range(nA):
@@ -124,7 +118,7 @@ def getValidPairs(output):
 
 
 # This function creates a list of keypoints belonging to each person
-# For each detected valid pair, it assigns the joint(s) to a person
+# For each detected valid pair, it assigns the joints to a person
 def getPersonwiseKeypoints(valid_pairs, invalid_pairs):
     # the last number in each row is the overall score
     personwiseKeypoints = -1 * np.ones((0, 19))
@@ -158,24 +152,38 @@ def getPersonwiseKeypoints(valid_pairs, invalid_pairs):
                     personwiseKeypoints = np.vstack([personwiseKeypoints, row])
     return personwiseKeypoints
 
+#reading the image
+image1 = cv2.imread("three.jpg")
 
 frameWidth = image1.shape[1]
 frameHeight = image1.shape[0]
 
 t = time.time()
+
+#read the network into memory 
 net = cv2.dnn.readNetFromCaffe(protoFile, weightsFile)
 
 
 # Fix the input Height and get the width according to the Aspect Ratio
-inHeight = 368
+inHeight = 256
 inWidth = int((inHeight/frameHeight)*frameWidth)
 
+#converting the image into an input blob so it can be fed into the network 
+#converts image from openCV format to Caffe blob format 
 inpBlob = cv2.dnn.blobFromImage(image1, 1.0 / 255, (inWidth, inHeight),
                           (0, 0, 0), swapRB=False, crop=False)
 
+#set the inpBlob as the input blob for the network
 net.setInput(inpBlob)
+
+#passing the image to the model
 output = net.forward()
-print("Time Taken in forward pass = {}".format(time.time() - t))
+
+#output will return a 4D matrix where the first element is the image id,
+#the second element is index of a keypoint
+#the third and fourth are the height and width of the image
+
+print("Time Taken to generate key points: ", (time.time() - t))
 
 detected_keypoints = []
 keypoints_list = np.zeros((0,3))
@@ -187,7 +195,6 @@ for part in range(nPoints):
     probMap = output[0,part,:,:]
     probMap = cv2.resize(probMap, (image1.shape[1], image1.shape[0]))
     keypoints = getKeypoints(probMap, threshold)
-    #print("Keypoints - {} : {}".format(keypointsMapping[part], keypoints))
     keypoints_with_id = []
     for i in range(len(keypoints)):
         keypoints_with_id.append(keypoints[i] + (keypoint_id,))
@@ -197,119 +204,22 @@ for part in range(nPoints):
     detected_keypoints.append(keypoints_with_id)
 
 
-#frameClone = image1.copy()
-maxPoint1 = detected_keypoints[0][0][0:2]
-maxPoint2 = detected_keypoints[0][0][0:2]
 
 frameClone = np.zeros((frameHeight, frameWidth ,3), np.uint8)
-for i in range(nPoints):
-    #i think j is how many people there are
-    for j in range(len(detected_keypoints[i])):
-        #for the first person
-        if j == 0:
-            if detected_keypoints[i][j][0:2] > maxPoint1:
-                maxPoint1 = detected_keypoints[i][j][0:2] 
-        #for the second person
-        if j == 1:
-            if detected_keypoints[i][j][0:2] > maxPoint2:
-                maxPoint2 = detected_keypoints[i][j][0:2]
-        # detected_keypoints[i][j] is where the x,y coordinate is, the [0:2] is splicing (there are
-        # 4 elements in the tuple and it only wants the first two numbers
-        #cv2.circle(frameClone, detected_keypoints[i][j][0:2], 5, (255,255,255), -1, cv2.LINE_AA)
-        #cv2.circle(frameClone, detected_keypoints[i][j][0:2], 5, (222,185,90), -1, cv2.LINE_AA)
-        
-    #print("Detected keypoint at", i, detected_keypoints[i])
 
-#to find the smallest of one person, you need to find the smallest of detected_keypoints[0][j] (you need to compare everything 
-#in j...
-#cv2.imshow("Keypoints",frameClone)
-#cv2.circle(frameClone, maxPoint1, 8, (255,0,0), 2, cv2.LINE_AA)
-#cv2.circle(frameClone, maxPoint2, 8, (255,153,255), 2, cv2.LINE_AA)
-print("Max keypoint 1 id:", maxPoint1)
-print("Max keypoint 2 id:", maxPoint2)
-#black image to draw binary skeleton on 
-#imgg = np.zeros((frameHeight, frameWidth ,3), np.uint8)
-
-
-
-
-#x_cord = (detected_keypoints[4][0][0] + detected_keypoints[7][1][0]) // 2
-#y_cord = (detected_keypoints[4][0][1] + detected_keypoints[7][1][1]) // 2
-#cv2.circle(frameClone, (x_cord, y_cord), 8, (255,153,255), 2, cv2.LINE_AA)
-
-print(detected_keypoints[4][0][0])
 
 #major joints are wrists, elbows, and shoulders
 #that's what I'm going to check to find the min and max coordinates of the points
 majorJoints = [2, 3, 4, 5, 6, 7]
-maxOfFirstPerson = -999
-indexOfMax = 0
-minOfSecondPerson = 999
-indexOfMin = 0
+
 
 #sort the major joints since the keypoints are not generated in order 
 #sort them by the x-value 
 for i in majorJoints:
     detected_keypoints[i].sort(key=lambda x:x[0])
-   
-        
+       
 
-#for-loop to find the min of the first person and the max of the second person 
-#to be used as coordinates when it's time for cropping the image 
-for i in (majorJoints):
-    for j in range(len(detected_keypoints[i])):
-        if j == 1:
-            if detected_keypoints[i][j][0] < minOfSecondPerson:
-                minOfSecondPerson = detected_keypoints[i][j][0]
-                indexOfMin = i
-        elif j == 0:
-            if detected_keypoints[i][j][0] > maxOfFirstPerson:
-                maxOfFirstPerson = detected_keypoints[i][j][0]
-                indexOfMax = i
-            
-print("max:", maxOfFirstPerson, "index:", indexOfMax)
-print("min:", minOfSecondPerson, "index:", indexOfMin)
-
-#for-loop to calculate the x and y coordinates of the middle of the max and min
-x_cord = (detected_keypoints[indexOfMin][1][0] + detected_keypoints[indexOfMax][0][0]) // 2
-y_cord = (detected_keypoints[indexOfMin][1][1] + detected_keypoints[indexOfMax][0][1]) // 2  
-#cv2.circle(frameClone, (x_cord, y_cord), 8, (255,153,200), 2, cv2.LINE_AA)           
-
-print("x_cord:", x_cord)
-print("y_cord", y_cord)
-
-print("min of Second person:", end='')
-print(detected_keypoints[indexOfMin][0][0:2])
-
-print("max of the first person:", end='')
-print(detected_keypoints[indexOfMax][1][0:2])
-
-#cv2.circle(frameClone, (detected_keypoints[indexOfMin][1][0:2]), 8, (255,153,255), 2, cv2.LINE_AA) 
-#cv2.circle(frameClone, (detected_keypoints[indexOfMax][0][0:2]), 8, (255,153,255), 2, cv2.LINE_AA)   
-#cv2.circle(frameClone, (x_cord, frameHeight), 8, (255,153,200), 2, cv2.LINE_AA) 
-#cv2.circle(frameClone, (0, 0), 8, (255,153,200), 2, cv2.LINE_AA)
-
-ankleIndexes = [10, 13]
-maxHeight = 0
-for i in ankleIndexes:
-    for j in range(len(detected_keypoints[i])):
-        if detected_keypoints[i][j][1] > maxHeight:
-            maxHeight = detected_keypoints[i][j][1]
-            
-eyeIndexes = [14, 15]
-minHeight = maxHeight
-for i in eyeIndexes:
-    for j in range(len(detected_keypoints[i])):
-        if detected_keypoints[i][j][1] < minHeight:
-            minHeight = detected_keypoints[i][j][1]
     
-print("frameWidth:", frameWidth)
-print("frameHeight:", frameHeight)
-
-#cv2.rectangle(frameClone,(0,0),(x_cord,frameHeight),(0,255,0),3)
-#newImg = frameClone[(0,minHeight), (x_cord, maxHeight)]
-#cv2.imwrite('cropped.jpg', newImg)
-  
 valid_pairs, invalid_pairs = getValidPairs(output)
 personwiseKeypoints = getPersonwiseKeypoints(valid_pairs, invalid_pairs)
 
@@ -320,43 +230,30 @@ for i in range(17):
             continue
         B = np.int32(keypoints_list[index.astype(int), 0])
         A = np.int32(keypoints_list[index.astype(int), 1])
-        #cv2.line(imgg, (B[0], A[0]), (B[1], A[1]), (255,255,255), 3, cv2.LINE_AA)
         cv2.line(frameClone, (B[0], A[0]), (B[1], A[1]),(255,255,255), 3, cv2.LINE_AA)
 
 
-#cv2.imshow("Detected Pose" , frameClone)
-#cv2.imwrite('result.jpg', imgg)
 
-"""
-gray = frameClone.copy()
-gray = cv2.cvtColor(frameClone, cv2.COLOR_RGB2GRAY)
-ret,thresh1 = cv2.threshold(gray,127,255,cv2.THRESH_BINARY)
-contours,hierarchy = cv2.findContours(thresh1,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-cnt = contours[0]
-x,y,w,h = cv2.boundingRect(cnt)
-crop = frameClone[y:y+h,x:x+w]
-restOfImage = frameClone[y:y+h, (x):(x)+(frameWidth - (x))]
-
-
-for i in range(nPoints):
+#to find the maximum height of the player
+ankleIndexes = [10, 13]
+maxHeight = 0
+for i in ankleIndexes:
     for j in range(len(detected_keypoints[i])):
-        if j == 0:
-            cv2.circle(frameClone, detected_keypoints[i][j][0:2], 5, (255,153,255), -1, cv2.LINE_AA)
-        elif j == 1:
-            cv2.circle(frameClone, detected_keypoints[i][j][0:2], 5, (0,255,0), -1, cv2.LINE_AA)
-        else:
-            cv2.circle(frameClone, detected_keypoints[i][j][0:2], 5, (185,255,0), -1, cv2.LINE_AA)
+        if detected_keypoints[i][j][1] > maxHeight:
+            maxHeight = detected_keypoints[i][j][1]
+#to find the minimum height of the player            
+eyeIndexes = [14, 15]
+minHeight = maxHeight
+for i in eyeIndexes:
+    for j in range(len(detected_keypoints[i])):
+        if detected_keypoints[i][j][1] < minHeight:
+            minHeight = detected_keypoints[i][j][1]
 
-
-restOfImage = frameClone.copy();
-gray = restOfImage.copy()
-"""
-
+            
 #number of players 
 size = len(detected_keypoints[0])
-#print("size", size)
 
-#keep this code because you're going to write about it in your paper
+
 """
 starting_x = 0
 for j in range(size):
@@ -385,35 +282,31 @@ for j in range(size):
 """          
 
             
-    
-    
-    
-    
-            
+
+maxOfPlayer = -999
+indexOfMax = 0
+minOfPlayer = 999
+indexOfMin = 0    
+                
 for j in range(size):
     #find the max and min joint locations of player j
     #to be used as coordinates when it's time for cropping the image 
     for i in (majorJoints):
         #minimum of player j
-        if detected_keypoints[i][j][0] < minOfSecondPerson:
-                minOfSecondPerson = detected_keypoints[i][j][0]
+        if detected_keypoints[i][j][0] < minOfPlayer:
+                minOfPlayer = detected_keypoints[i][j][0]
                 indexOfMin = i
         #maximum of player j
-        if detected_keypoints[i][j][0] > maxOfFirstPerson:
-                maxOfFirstPerson = detected_keypoints[i][j][0]
+        if detected_keypoints[i][j][0] > maxOfPlayer:
+                maxOfPlayer = detected_keypoints[i][j][0]
                 indexOfMax = i
 
     minn = detected_keypoints[indexOfMin][j][0]
     maxx = detected_keypoints[indexOfMax][j][0]
     crop = frameClone[minHeight:minHeight+(maxHeight-minHeight), minn:minn + (maxx - minn)]
-    cv2.imwrite('players/player'+str(j)+'.jpg', crop)
+    cv2.imwrite('../poseRecognition/players/player'+str(j)+'.jpg', crop)
 
 
 
 cv2.imwrite('result.jpg', frameClone)
-
-
-
-
-
 
